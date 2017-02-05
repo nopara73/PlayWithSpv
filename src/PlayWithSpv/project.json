@@ -1,14 +1,16 @@
-﻿{
+{
   "version": "1.0.0-*",
   "buildOptions": {
-    "emitEntryPoint": true
+    "emitEntryPoint": true,
+    "nowarn": []
   },
 
   "dependencies": {
     "Microsoft.NETCore.App": {
       "type": "platform",
-      "version": "1.0.1"
-    }
+      "version": "1.1.0"
+    },
+    "NBitcoin": "3.0.1.9"
   },
 
   "frameworks": {

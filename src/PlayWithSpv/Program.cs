@@ -1,13 +1,11 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
 using NBitcoin.Protocol;
 using NBitcoin.Protocol.Behaviors;
-using NBitcoin.SPV;
+using Stratis.Bitcoin.BlockPulling;
 
 namespace PlayWithSpv
 {
@@ -16,34 +14,37 @@ namespace PlayWithSpv
 		public static SemaphoreSlim SemaphoreSave = new SemaphoreSlim(1, 1);
 		private static string _addressManagerFilePath;
 		private static string _chainFilePath;
-		private static string _trackerFilePath;
 		private const string SpvFolderPath = "Spv";
+		private static readonly Network Network = Network.Main;
+		private const int WalletCreationHeight = 451900;
+		private static LookaheadBlockPuller BlockPuller;
 
 		public static void Main(string[] args)
 		{
 			Directory.CreateDirectory(SpvFolderPath);
-			_addressManagerFilePath = Path.Combine(SpvFolderPath, $"AddressManager{Network.TestNet}.dat");
-			_chainFilePath = Path.Combine(SpvFolderPath, $"LocalChain{Network.TestNet}.dat");
-			_trackerFilePath = Path.Combine(SpvFolderPath, $"Tracker{Network.TestNet}.dat");
+			_addressManagerFilePath = Path.Combine(SpvFolderPath, $"AddressManager{Network}.dat");
+			_chainFilePath = Path.Combine(SpvFolderPath, $"LocalSpvChain{Network}.dat");
 
 			_connectionParameters = new NodeConnectionParameters();
 
 			//So we find nodes faster
 			_connectionParameters.TemplateBehaviors.Add(new AddressManagerBehavior(AddressManager));
 			//So we don't have to load the chain each time we start
-			_connectionParameters.TemplateBehaviors.Add(new ChainBehavior(LocalChain));
-			//Tracker knows which scriptPubKey and outpoints to track, it monitors all your wallets at the same
-			_connectionParameters.TemplateBehaviors.Add(new TrackerBehavior(Tracker));
+			_connectionParameters.TemplateBehaviors.Add(new ChainBehavior(LocalSpvChain));
 
-			_nodes = new NodesGroup(Network.TestNet, _connectionParameters,
+			_nodes = new NodesGroup(Network, _connectionParameters,
 				new NodeRequirement
 				{
-					RequiredServices = NodeServices.Network, // Needed for SPV
+					RequiredServices = NodeServices.Network,
+					MinVersion = ProtocolVersion.SENDHEADERS_VERSION
 				})
 			{
 				MaximumNodeConnection = 8,
-				AllowSameGroup = false,
 			};
+			var bp = new NodesBlockPuller(LocalSpvChain, _nodes.ConnectedNodes);
+			_connectionParameters.TemplateBehaviors.Add(new NodesBlockPuller.NodesBlockPullerBehavior(bp));
+			_nodes.NodeConnectionParameters = _connectionParameters;
+			BlockPuller = (LookaheadBlockPuller)bp;
 
 			Console.WriteLine("Start connecting to nodes...");
 			_nodes.Connect();
@@ -53,13 +54,14 @@ namespace PlayWithSpv
 			var t1 = ReportConnectedNodeCountAsync(cts.Token);
 			var t2 = ReportHeightAsync(cts.Token);
 			var t3 = PeriodicSaveAsync(10000, cts.Token);
+			var t4 = BlockPullerJobAsync(cts.Token);
 
 			Console.WriteLine("Press a key to exit...");
 			Console.ReadKey();
 			Console.WriteLine("Exiting...");
 
 			cts.Cancel();
-			Task.WhenAll(t1, t2, t3).Wait();
+			Task.WhenAll(t1, t2, t3, t4).Wait();
 			_nodes.Dispose();
 			SaveAsync().Wait();
 		}
@@ -76,8 +78,8 @@ namespace PlayWithSpv
 		private static async Task SaveAsync()
 		{
 			// Check if there is something to save
-			bool filesOk = true;
-			var c = new ConcurrentChain(Network.TestNet);
+			bool fileOk = true;
+			var c = new ConcurrentChain(Network);
 			await SemaphoreSave.WaitAsync().ConfigureAwait(false);
 			try
 			{
@@ -85,7 +87,7 @@ namespace PlayWithSpv
 			}
 			catch
 			{
-				filesOk = false;
+				fileOk = false;
 			}
 			finally
 			{
@@ -93,8 +95,8 @@ namespace PlayWithSpv
 			}
 
 			// If there is nothing to save don't save (can be improved by only saving what needs to be)
-			var heightEquals = c.Height == LocalChain.Height;
-			bool saveChain = !(filesOk && heightEquals);
+			var sameTip = c.SameTip(LocalSpvChain);
+			bool saveChain = !(fileOk && sameTip);
 
 			// If there is something to save then save
 			await SemaphoreSave.WaitAsync().ConfigureAwait(false);
@@ -102,17 +104,13 @@ namespace PlayWithSpv
 			{
 				await Task.Run(() =>
 				{
-					AddressManager.SavePeerFile(_addressManagerFilePath, Network.TestNet);
+					AddressManager.SavePeerFile(_addressManagerFilePath, Network);
 
-					using(var fs = File.Open(_trackerFilePath, FileMode.Create))
-					{
-						Tracker.Save(fs);
-					}
 					if(saveChain)
 					{
 						using(var fs = File.Open(_chainFilePath, FileMode.Create))
 						{
-							LocalChain.WriteTo(fs);
+							LocalSpvChain.WriteTo(fs);
 						}
 						Console.WriteLine("Chain saved");
 					}
@@ -126,7 +124,7 @@ namespace PlayWithSpv
 
 		private static NodesGroup _nodes;
 
-		private static int currentNodeCount = 0;
+		private static int prevNodeCount = -1;
 		private static async Task ReportConnectedNodeCountAsync(CancellationToken ctsToken)
 		{
 			while (true)
@@ -134,28 +132,73 @@ namespace PlayWithSpv
 				if (ctsToken.IsCancellationRequested) return;
 
 				var nodeCount = _nodes.ConnectedNodes.Count;
-				if(currentNodeCount != nodeCount)
+				if(prevNodeCount != nodeCount)
 				{
-					currentNodeCount = nodeCount;
+					prevNodeCount = nodeCount;
 					Console.WriteLine($"Number of connected nodes: {nodeCount}");
 				}
 				await Task.Delay(100).ConfigureAwait(false);
 			}
 		}
-		private static int currentHeight = 0;
+		private static int prevSpvHeight = -1;
 		private static async Task ReportHeightAsync(CancellationToken ctsToken)
 		{
 			while (true)
 			{
 				if (ctsToken.IsCancellationRequested) return;
 
-				var height = LocalChain.Height;
-				if (currentHeight != height)
+				var height = LocalSpvChain.Height;
+				if (prevSpvHeight != height)
 				{
-					currentHeight = height;
-					Console.WriteLine($"Height of local chain:  {height}");
+					prevSpvHeight = height;
+					Console.WriteLine($"Height of local SPV chain:  {height}");
 				}
+
 				await Task.Delay(3000).ConfigureAwait(false);
+			}
+		}
+
+		private static async Task BlockPullerJobAsync(CancellationToken ctsToken)
+		{
+			while(true)
+			{
+				if(ctsToken.IsCancellationRequested) return;
+				if(LocalSpvChain.Height < WalletCreationHeight)
+				{
+					await Task.Delay(1000).ConfigureAwait(false);
+					continue;
+				}
+
+				int height;
+				if(LocalFullChain.Count == 0)
+				{
+					height = WalletCreationHeight;
+				}
+				else if(LocalSpvChain.Height <= LocalFullChain.BestHeight)
+				{
+					await Task.Delay(100).ConfigureAwait(false);
+					continue;
+				}
+				else
+				{
+					height = LocalFullChain.BestHeight + 1;
+				}
+
+				var chainedBlock = LocalSpvChain.GetBlock(height);
+				BlockPuller.SetLocation(new ChainedBlock(chainedBlock.Previous.Header, chainedBlock.Previous.Height));
+				Block block;
+				try
+				{
+					block = BlockPuller.NextBlock(ctsToken);
+				}
+				catch (OperationCanceledException)
+				{
+					return;
+				}
+
+				LocalFullChain.AddOrReplace(chainedBlock, block);
+
+				Console.WriteLine($"Full blocks left to download:  {LocalSpvChain.Height - LocalFullChain.BestHeight}");
 			}
 		}
 
@@ -189,7 +232,7 @@ namespace PlayWithSpv
 				}
 			}
 		}
-		private static ConcurrentChain LocalChain
+		private static ConcurrentChain LocalSpvChain
 		{
 			get
 			{
@@ -200,7 +243,7 @@ namespace PlayWithSpv
 						if(chainBehavior != null)
 							return chainBehavior.Chain;
 					}
-				var chain = new ConcurrentChain(Network.TestNet);
+				var chain = new ConcurrentChain(Network);
 				SemaphoreSave.Wait();
 				try
 				{
@@ -218,34 +261,7 @@ namespace PlayWithSpv
 				return chain;
 			}
 		}
-		private static Tracker Tracker
-		{
-			get
-			{
-				if(_connectionParameters != null)
-					foreach(var behavior in _connectionParameters.TemplateBehaviors)
-					{
-						var trackerBehavior = behavior as TrackerBehavior;
-						if(trackerBehavior != null)
-							return trackerBehavior.Tracker;
-					}
-				SemaphoreSave.Wait();
-				try
-				{
-					using(var fs = File.OpenRead(_trackerFilePath))
-					{
-						return Tracker.Load(fs);
-					}
-				}
-				catch
-				{
-					return new Tracker();
-				}
-				finally
-				{
-					SemaphoreSave.Release();
-				}
-			}
-		}
+
+		private static readonly PartialFullBlockChain LocalFullChain = new PartialFullBlockChain();
 	}
 }

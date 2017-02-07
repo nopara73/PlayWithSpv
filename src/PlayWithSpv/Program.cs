@@ -37,10 +37,7 @@ namespace PlayWithSpv
 				{
 					RequiredServices = NodeServices.Network,
 					MinVersion = ProtocolVersion.SENDHEADERS_VERSION
-				})
-			{
-				MaximumNodeConnection = 8,
-			};
+				});
 			var bp = new NodesBlockPuller(LocalSpvChain, _nodes.ConnectedNodes);
 			_connectionParameters.TemplateBehaviors.Add(new NodesBlockPuller.NodesBlockPullerBehavior(bp));
 			_nodes.NodeConnectionParameters = _connectionParameters;

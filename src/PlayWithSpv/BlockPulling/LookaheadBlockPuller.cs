@@ -12,12 +12,13 @@ namespace Stratis.Bitcoin.BlockPulling
 	}
 	public abstract class LookaheadBlockPuller : BlockPuller, ILookaheadBlockPuller
 	{
-		class DownloadedBlock
+		private class DownloadedBlock
 		{
 			public int Length;
 			public Block Block;
 		}
-		const int BLOCK_SIZE = 2000000;
+
+		private const int BLOCK_SIZE = 2000000;
 		public LookaheadBlockPuller()
 		{
 			MaxBufferedSize = BLOCK_SIZE * 10;
@@ -38,7 +39,7 @@ namespace Stratis.Bitcoin.BlockPulling
 			set;
 		}
 
-		int _ActualLookahead;
+		private int _ActualLookahead;
 		public int ActualLookahead
 		{
 			get
@@ -67,7 +68,7 @@ namespace Stratis.Bitcoin.BlockPulling
 			}
 		}
 
-		int _CurrentDownloading = 0;
+		private int _CurrentDownloading = 0;
 
 		public int MaxBufferedSize
 		{
@@ -82,11 +83,11 @@ namespace Stratis.Bitcoin.BlockPulling
 			internal set;
 		}
 
-		long _CurrentSize;
-		ConcurrentDictionary<uint256, DownloadedBlock> _DownloadedBlocks = new ConcurrentDictionary<uint256, DownloadedBlock>();
+		private long _CurrentSize;
+		private ConcurrentDictionary<uint256, DownloadedBlock> _DownloadedBlocks = new ConcurrentDictionary<uint256, DownloadedBlock>();
 
-		ChainedBlock _Location;
-		ChainedBlock _LookaheadLocation;
+		private ChainedBlock _Location;
+		private ChainedBlock _LookaheadLocation;
 		public ChainedBlock LookaheadLocation
 		{
 			get
@@ -130,7 +131,7 @@ namespace Stratis.Bitcoin.BlockPulling
 			return block;
 		}
 
-		static decimal GetMedian(List<int> sourceNumbers)
+		private static decimal GetMedian(List<int> sourceNumbers)
 		{
 			//Framework 2.0 version of this method. there is an easier way in F4        
 			if(sourceNumbers == null || sourceNumbers.Count == 0)
@@ -146,7 +147,7 @@ namespace Stratis.Bitcoin.BlockPulling
 			return median;
 		}
 
-		List<int> _DownloadedCounts = new List<int>();
+		private List<int> _DownloadedCounts = new List<int>();
 		// If blocks ActualLookahead is 8: 
 		// If the number of downloaded block reach 2 or below, then ActualLookahead will be multiplied by 1.1. 
 		// If it reach 14 or above, it will be divided by 1.1.
@@ -186,8 +187,8 @@ namespace Stratis.Bitcoin.BlockPulling
 
 		protected abstract void AskBlocks(ChainedBlock[] downloadRequests);
 
-		AutoResetEvent _Consumed = new AutoResetEvent(false);
-		AutoResetEvent _Pushed = new AutoResetEvent(false);
+		private AutoResetEvent _Consumed = new AutoResetEvent(false);
+		private AutoResetEvent _Pushed = new AutoResetEvent(false);
 
 		/// <summary>
 		/// If true, the puller is a bottleneck
@@ -256,7 +257,7 @@ namespace Stratis.Bitcoin.BlockPulling
 			AskBlocks(downloadRequests);
 		}
 
-		static int[] waitTime = new[] { 1, 10, 20, 40, 100, 1000 };
+		private static int[] waitTime = new[] { 1, 10, 20, 40, 100, 1000 };
 		private Block NextBlockCore(CancellationToken cancellationToken)
 		{
 			int i = 0;

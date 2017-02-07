@@ -14,7 +14,7 @@ namespace Stratis.Bitcoin.BlockPulling
 		public class NodesBlockPullerBehavior : NodeBehavior
 		{
 			private readonly NodesBlockPuller _Puller;
-			CancellationTokenSource _Cts = new CancellationTokenSource();
+			private CancellationTokenSource _Cts = new CancellationTokenSource();
 			public NodesBlockPullerBehavior(NodesBlockPuller puller)
 			{
 				_Puller = puller;
@@ -133,15 +133,15 @@ namespace Stratis.Bitcoin.BlockPulling
 			}
 		}
 
-		NodesCollection _Nodes;
+		private NodesCollection _Nodes;
 		public NodesBlockPuller(ConcurrentChain chain, NodesCollection nodes)
 		{
 			Chain = chain;
 			_Nodes = nodes;
 		}
 
-		ConcurrentDictionary<uint256, NodesBlockPullerBehavior> _Map = new ConcurrentDictionary<uint256, NodesBlockPullerBehavior>();
-		ConcurrentBag<uint256> _PendingInventoryVectors = new ConcurrentBag<uint256>();
+		private ConcurrentDictionary<uint256, NodesBlockPullerBehavior> _Map = new ConcurrentDictionary<uint256, NodesBlockPullerBehavior>();
+		private ConcurrentBag<uint256> _PendingInventoryVectors = new ConcurrentBag<uint256>();
 
 		protected override void AskBlocks(ChainedBlock[] downloadRequests)
 		{
@@ -222,9 +222,9 @@ namespace Stratis.Bitcoin.BlockPulling
 			}
 		}
 
-		const int MaxQualityScore = 150;
-		const int MinQualityScore = 1;
-		Random _Rand = new Random();
+		private const int MaxQualityScore = 150;
+		private const int MinQualityScore = 1;
+		private Random _Rand = new Random();
 		//Chose random index proportional to the score
 		private int GetNodeIndex(int[] scores, int totalScore)
 		{
@@ -241,7 +241,7 @@ namespace Stratis.Bitcoin.BlockPulling
 			return scores.Length - 1;
 		}
 
-		NodeRequirement _Requirements = new NodeRequirement()
+		private NodeRequirement _Requirements = new NodeRequirement()
 		{
 			MinVersion = ProtocolVersion.SENDHEADERS_VERSION,
 			RequiredServices = NodeServices.Network

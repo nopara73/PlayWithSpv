@@ -133,7 +133,7 @@ namespace Stratis.Bitcoin.BlockPulling
 
 		private static decimal GetMedian(List<int> sourceNumbers)
 		{
-			//Framework 2.0 version of this method. there is an easier way in F4        
+			//Framework 2.0 version of this method. there is an easier way in F4
 			if(sourceNumbers == null || sourceNumbers.Count == 0)
 				throw new System.Exception("Median of empty array not defined.");
 
@@ -148,8 +148,8 @@ namespace Stratis.Bitcoin.BlockPulling
 		}
 
 		private List<int> _DownloadedCounts = new List<int>();
-		// If blocks ActualLookahead is 8: 
-		// If the number of downloaded block reach 2 or below, then ActualLookahead will be multiplied by 1.1. 
+		// If blocks ActualLookahead is 8:
+		// If the number of downloaded block reach 2 or below, then ActualLookahead will be multiplied by 1.1.
 		// If it reach 14 or above, it will be divided by 1.1.
 		private void CalculateLookahead()
 		{
@@ -208,9 +208,9 @@ namespace Stratis.Bitcoin.BlockPulling
 			internal set;
 		}
 
-		// making this method public allows to push blocks directly 
+		// making this method public allows to push blocks directly
 		// to the downloader, this is mainly usefull for testing.
-		public void PushBlock(int length, Block block, CancellationToken cancellation) 
+		public void PushBlock(int length, Block block, CancellationToken cancellation)
 		{
 			var hash = block.Header.GetHash();
 			var header = Chain.GetBlock(hash);

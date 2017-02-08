@@ -183,7 +183,7 @@ namespace PlayWithSpv
 
 				var chainedBlock = LocalSpvChain.GetBlock(height);
 				BlockPuller.SetLocation(new ChainedBlock(chainedBlock.Previous.Header, chainedBlock.Previous.Height));
-				Block block;
+				Block block = null;
 				CancellationTokenSource ctsBlockDownload = new CancellationTokenSource();
 #pragma warning disable 4014
 				const int timeoutSec = 60;
@@ -197,6 +197,11 @@ namespace PlayWithSpv
 				{
 					if (ctsToken.IsCancellationRequested) return;
 					Console.WriteLine($"Failed to download block {chainedBlock.Height} within {timeoutSec} seconds. Retry");
+					continue;
+				}
+				if(block == null)
+				{
+					Console.WriteLine("Downloaded block is null. Retry");
 					continue;
 				}
 

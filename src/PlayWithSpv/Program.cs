@@ -11,6 +11,11 @@ namespace PlayWithSpv
 {
 	public class Program
 	{
+		// TestNet addresses, first time used
+		// 2Mz3BiReit6sNrSh9EMuhwUnhtqf2B35HpN, 1088037
+		// mwiSUHLGngZd849Sz3TE6kRb7fHjJCuwKe, 1088031
+		// muE3Z5Lhdk3WerqVevH49htmV96HJu4RLJ, 1088051
+
 		private static readonly Network Network = Network.TestNet;
 		private const int WalletCreationHeight = 1087900; // 451900;
 
@@ -18,7 +23,7 @@ namespace PlayWithSpv
 		public static SemaphoreSlim SemaphoreSaveFullChain = new SemaphoreSlim(1, 1);
 		private static string _addressManagerFilePath;
 		private static string _spvChainFilePath;
-		private static string _fullChainFilePath;
+		private static string _partialChainFilePath;
 		private const string SpvFolderPath = "Spv";
 		private static LookaheadBlockPuller BlockPuller;
 		private static NodeConnectionParameters _connectionParameters;
@@ -28,7 +33,7 @@ namespace PlayWithSpv
 			Directory.CreateDirectory(SpvFolderPath);
 			_addressManagerFilePath = Path.Combine(SpvFolderPath, $"AddressManager{Network}.dat");
 			_spvChainFilePath = Path.Combine(SpvFolderPath, $"LocalSpvChain{Network}.dat");
-			_fullChainFilePath = Path.Combine(SpvFolderPath, $"LocalFullChain{Network}.dat");
+			_partialChainFilePath = Path.Combine(SpvFolderPath, $"LocalFullChain{Network}.dat");
 
 			_connectionParameters = new NodeConnectionParameters();
 
@@ -98,7 +103,7 @@ namespace PlayWithSpv
 
 			// If there is nothing to save don't save (can be improved by only saving what needs to be)
 			var sameTip = c.SameTip(LocalSpvChain);
-			bool saveChain = !(fileOk && sameTip);
+			bool saveSpvChain = !(fileOk && sameTip);
 
 			// If there is something to save then save
 			await SemaphoreSave.WaitAsync().ConfigureAwait(false);
@@ -108,60 +113,22 @@ namespace PlayWithSpv
 				{
 					AddressManager.SavePeerFile(_addressManagerFilePath, Network);
 
-					if(saveChain)
+					if(saveSpvChain)
 					{
 						using(var fs = File.Open(_spvChainFilePath, FileMode.Create))
 						{
 							LocalSpvChain.WriteTo(fs);
 						}
-						Console.WriteLine("Spv chain saved");
+						Console.WriteLine($"{nameof(LocalSpvChain)} saved");
 					}
+
+					LocalPartialChain.Flush(_partialChainFilePath);
+					Console.WriteLine($"{nameof(LocalPartialChain)} saved");
 				}).ConfigureAwait(false);
 			}
 			finally
 			{
 				SemaphoreSave.Release();
-			}
-		}
-		private static async Task SaveFullChainAsync()
-		{
-			// ToDo Check if there is something to save
-			//bool fileOk = true;
-			//var c = new ConcurrentChain(Network);
-			//await SemaphoreSave.WaitAsync().ConfigureAwait(false);
-			//try
-			//{
-			//	c.Load(File.ReadAllBytes(_chainFilePath));
-			//}
-			//catch
-			//{
-			//	fileOk = false;
-			//}
-			//finally
-			//{
-			//	SemaphoreSave.Release();
-			//}
-
-			//// If there is nothing to save don't save (can be improved by only saving what needs to be)
-			//var sameTip = c.SameTip(LocalSpvChain);
-			//bool saveChain = !(fileOk && sameTip);
-
-			// If there is something to save then save
-			await SemaphoreSaveFullChain.WaitAsync().ConfigureAwait(false);
-			try
-			{
-				await Task.Run(() =>
-				{
-					//if (saveChain)
-					//{
-						LocalFullChain.Save(_fullChainFilePath);
-						Console.WriteLine("Full chain saved");
-					//}
-				}).ConfigureAwait(false);
-			}
-			finally
-			{
-				SemaphoreSaveFullChain.Release();
 			}
 		}
 
@@ -213,18 +180,18 @@ namespace PlayWithSpv
 				}
 
 				int height;
-				if(LocalFullChain.Count == 0)
+				if(LocalPartialChain.BlockCount == 0)
 				{
 					height = WalletCreationHeight;
 				}
-				else if(LocalSpvChain.Height <= LocalFullChain.BestHeight)
+				else if(LocalSpvChain.Height <= LocalPartialChain.BestHeight)
 				{
 					await Task.Delay(100).ConfigureAwait(false);
 					continue;
 				}
 				else
 				{
-					height = LocalFullChain.BestHeight + 1;
+					height = LocalPartialChain.BestHeight + 1;
 				}
 
 				var chainedBlock = LocalSpvChain.GetBlock(height);
@@ -248,9 +215,9 @@ namespace PlayWithSpv
 					continue;
 				}
 
-				LocalFullChain.AddOrReplace(chainedBlock, block);
+				LocalPartialChain.Add(chainedBlock, block);
 
-				Console.WriteLine($"Full blocks left to download:  {LocalSpvChain.Height - LocalFullChain.BestHeight}");
+				Console.WriteLine($"Full blocks left to download:  {LocalSpvChain.Height - LocalPartialChain.BestHeight}");
 			}
 		}
 
@@ -312,18 +279,18 @@ namespace PlayWithSpv
 			}
 		}
 
-		private static PartialFullBlockChain _localFullChain = null;
-		private static PartialFullBlockChain LocalFullChain
+		private static PartialBlockChain _localMerkleChain = null;
+		private static PartialBlockChain LocalPartialChain
 		{
 			get
 			{
-				if(_localFullChain != null) return _localFullChain;
+				if(_localMerkleChain != null) return _localMerkleChain;
 
-				_localFullChain = new PartialFullBlockChain(Network);
+				_localMerkleChain = new PartialBlockChain(Network);
 				SemaphoreSave.Wait();
 				try
 				{
-					_localFullChain.Load(_spvChainFilePath);
+					_localMerkleChain.Load(_spvChainFilePath);
 				}
 				catch
 				{
@@ -334,7 +301,7 @@ namespace PlayWithSpv
 					SemaphoreSave.Release();
 				}
 
-				return _localFullChain;
+				return _localMerkleChain;
 			}
 		}
 	}

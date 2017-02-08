@@ -11,19 +11,24 @@ namespace PlayWithSpv
 {
 	public class Program
 	{
+		private static readonly Network Network = Network.TestNet;
+		private const int WalletCreationHeight = 1087900; // 451900;
+
 		public static SemaphoreSlim SemaphoreSave = new SemaphoreSlim(1, 1);
+		public static SemaphoreSlim SemaphoreSaveFullChain = new SemaphoreSlim(1, 1);
 		private static string _addressManagerFilePath;
-		private static string _chainFilePath;
+		private static string _spvChainFilePath;
+		private static string _fullChainFilePath;
 		private const string SpvFolderPath = "Spv";
-		private static readonly Network Network = Network.Main;
-		private const int WalletCreationHeight = 451900;
 		private static LookaheadBlockPuller BlockPuller;
+		private static NodeConnectionParameters _connectionParameters;
 
 		public static void Main(string[] args)
 		{
 			Directory.CreateDirectory(SpvFolderPath);
 			_addressManagerFilePath = Path.Combine(SpvFolderPath, $"AddressManager{Network}.dat");
-			_chainFilePath = Path.Combine(SpvFolderPath, $"LocalSpvChain{Network}.dat");
+			_spvChainFilePath = Path.Combine(SpvFolderPath, $"LocalSpvChain{Network}.dat");
+			_fullChainFilePath = Path.Combine(SpvFolderPath, $"LocalFullChain{Network}.dat");
 
 			_connectionParameters = new NodeConnectionParameters();
 
@@ -80,7 +85,7 @@ namespace PlayWithSpv
 			await SemaphoreSave.WaitAsync().ConfigureAwait(false);
 			try
 			{
-				c.Load(File.ReadAllBytes(_chainFilePath));
+				c.Load(File.ReadAllBytes(_spvChainFilePath));
 			}
 			catch
 			{
@@ -105,17 +110,58 @@ namespace PlayWithSpv
 
 					if(saveChain)
 					{
-						using(var fs = File.Open(_chainFilePath, FileMode.Create))
+						using(var fs = File.Open(_spvChainFilePath, FileMode.Create))
 						{
 							LocalSpvChain.WriteTo(fs);
 						}
-						Console.WriteLine("Chain saved");
+						Console.WriteLine("Spv chain saved");
 					}
 				}).ConfigureAwait(false);
 			}
 			finally
 			{
 				SemaphoreSave.Release();
+			}
+		}
+		private static async Task SaveFullChainAsync()
+		{
+			// ToDo Check if there is something to save
+			//bool fileOk = true;
+			//var c = new ConcurrentChain(Network);
+			//await SemaphoreSave.WaitAsync().ConfigureAwait(false);
+			//try
+			//{
+			//	c.Load(File.ReadAllBytes(_chainFilePath));
+			//}
+			//catch
+			//{
+			//	fileOk = false;
+			//}
+			//finally
+			//{
+			//	SemaphoreSave.Release();
+			//}
+
+			//// If there is nothing to save don't save (can be improved by only saving what needs to be)
+			//var sameTip = c.SameTip(LocalSpvChain);
+			//bool saveChain = !(fileOk && sameTip);
+
+			// If there is something to save then save
+			await SemaphoreSaveFullChain.WaitAsync().ConfigureAwait(false);
+			try
+			{
+				await Task.Run(() =>
+				{
+					//if (saveChain)
+					//{
+						LocalFullChain.Save(_fullChainFilePath);
+						Console.WriteLine("Full chain saved");
+					//}
+				}).ConfigureAwait(false);
+			}
+			finally
+			{
+				SemaphoreSaveFullChain.Release();
 			}
 		}
 
@@ -184,11 +230,8 @@ namespace PlayWithSpv
 				var chainedBlock = LocalSpvChain.GetBlock(height);
 				BlockPuller.SetLocation(new ChainedBlock(chainedBlock.Previous.Header, chainedBlock.Previous.Height));
 				Block block = null;
-				CancellationTokenSource ctsBlockDownload = new CancellationTokenSource();
-#pragma warning disable 4014
 				const int timeoutSec = 60;
-				CancelIfTimedOutAsync(TimeSpan.FromSeconds(timeoutSec), ctsBlockDownload);
-#pragma warning restore 4014
+				CancellationTokenSource ctsBlockDownload = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSec));
 				try
 				{
 					block = await Task.Run(() => BlockPuller.NextBlock(ctsBlockDownload.Token)).ConfigureAwait(false);
@@ -210,14 +253,6 @@ namespace PlayWithSpv
 				Console.WriteLine($"Full blocks left to download:  {LocalSpvChain.Height - LocalFullChain.BestHeight}");
 			}
 		}
-
-		private static async Task CancelIfTimedOutAsync(TimeSpan seconds, CancellationTokenSource cts)
-		{
-			await Task.Delay(seconds).ConfigureAwait(false);
-			cts.Cancel();
-		}
-
-		private static NodeConnectionParameters _connectionParameters;
 
 		private static AddressManager AddressManager
 		{
@@ -262,7 +297,7 @@ namespace PlayWithSpv
 				SemaphoreSave.Wait();
 				try
 				{
-					chain.Load(File.ReadAllBytes(_chainFilePath));
+					chain.Load(File.ReadAllBytes(_spvChainFilePath));
 				}
 				catch
 				{
@@ -277,6 +312,30 @@ namespace PlayWithSpv
 			}
 		}
 
-		private static readonly PartialFullBlockChain LocalFullChain = new PartialFullBlockChain();
+		private static PartialFullBlockChain _localFullChain = null;
+		private static PartialFullBlockChain LocalFullChain
+		{
+			get
+			{
+				if(_localFullChain != null) return _localFullChain;
+
+				_localFullChain = new PartialFullBlockChain(Network);
+				SemaphoreSave.Wait();
+				try
+				{
+					_localFullChain.Load(_spvChainFilePath);
+				}
+				catch
+				{
+					// ignored
+				}
+				finally
+				{
+					SemaphoreSave.Release();
+				}
+
+				return _localFullChain;
+			}
+		}
 	}
 }

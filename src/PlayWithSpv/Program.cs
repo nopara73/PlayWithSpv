@@ -184,19 +184,32 @@ namespace PlayWithSpv
 				var chainedBlock = LocalSpvChain.GetBlock(height);
 				BlockPuller.SetLocation(new ChainedBlock(chainedBlock.Previous.Header, chainedBlock.Previous.Height));
 				Block block;
+				CancellationTokenSource ctsBlockDownload = new CancellationTokenSource();
+#pragma warning disable 4014
+				const int timeoutSec = 60;
+				CancelIfTimedOutAsync(TimeSpan.FromSeconds(timeoutSec), ctsBlockDownload);
+#pragma warning restore 4014
 				try
 				{
-					block = BlockPuller.NextBlock(ctsToken);
+					block = await Task.Run(() => BlockPuller.NextBlock(ctsBlockDownload.Token)).ConfigureAwait(false);
 				}
 				catch (OperationCanceledException)
 				{
-					return;
+					if (ctsToken.IsCancellationRequested) return;
+					Console.WriteLine($"Failed to download block {chainedBlock.Height} within {timeoutSec} seconds. Retry");
+					continue;
 				}
 
 				LocalFullChain.AddOrReplace(chainedBlock, block);
 
 				Console.WriteLine($"Full blocks left to download:  {LocalSpvChain.Height - LocalFullChain.BestHeight}");
 			}
+		}
+
+		private static async Task CancelIfTimedOutAsync(TimeSpan seconds, CancellationTokenSource cts)
+		{
+			await Task.Delay(seconds).ConfigureAwait(false);
+			cts.Cancel();
 		}
 
 		private static NodeConnectionParameters _connectionParameters;

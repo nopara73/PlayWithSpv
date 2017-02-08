@@ -221,7 +221,7 @@ namespace Stratis.Bitcoin.BlockPulling
 				cancellation.ThrowIfCancellationRequested();
 			}
 			IsFull = false;
-			_DownloadedBlocks.TryAdd(hash, new DownloadedBlock() { Block = block, Length = length });
+			_DownloadedBlocks.TryAdd(hash, new DownloadedBlock { Block = block, Length = length });
 			_CurrentSize += length;
 			_Pushed.Set();
 		}

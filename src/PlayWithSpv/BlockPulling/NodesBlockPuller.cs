@@ -241,7 +241,7 @@ namespace Stratis.Bitcoin.BlockPulling
 			return scores.Length - 1;
 		}
 
-		private NodeRequirement _Requirements = new NodeRequirement()
+		private NodeRequirement _Requirements = new NodeRequirement
 		{
 			MinVersion = ProtocolVersion.SENDHEADERS_VERSION,
 			RequiredServices = NodeServices.Network

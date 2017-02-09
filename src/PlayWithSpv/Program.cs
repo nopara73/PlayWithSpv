@@ -11,11 +11,6 @@ namespace PlayWithSpv
 {
 	public class Program
 	{
-		// TestNet addresses, first time used
-		// 2Mz3BiReit6sNrSh9EMuhwUnhtqf2B35HpN, 1088037
-		// mwiSUHLGngZd849Sz3TE6kRb7fHjJCuwKe, 1088031
-		// muE3Z5Lhdk3WerqVevH49htmV96HJu4RLJ, 1088051
-
 		private static readonly Network Network = Network.TestNet;
 		private const int WalletCreationHeight = 1087900; // 451900;
 
@@ -30,6 +25,17 @@ namespace PlayWithSpv
 
 		public static void Main(string[] args)
 		{
+			// TestNet addresses, first time used
+			var a1 = BitcoinAddress.Create("2Mz3BiReit6sNrSh9EMuhwUnhtqf2B35HpN"); // testnet, 1088037
+			var a2 = BitcoinAddress.Create("mwiSUHLGngZd849Sz3TE6kRb7fHjJCuwKe"); // testnet, 1088031
+			//var a3 = BitcoinAddress.Create("muE3Z5Lhdk3WerqVevH49htmV96HJu4RLJ"); // testnet, 1088031
+			LocalPartialChain.Track(a1.ScriptPubKey);
+			LocalPartialChain.Track(a2.ScriptPubKey);
+			//LocalPartialChain.Track(a3.ScriptPubKey);
+			Console.WriteLine($"Tracking {a1}");
+			Console.WriteLine($"Tracking {a2}");
+			//Console.WriteLine($"Tracking {a3}");
+
 			Directory.CreateDirectory(SpvFolderPath);
 			_addressManagerFilePath = Path.Combine(SpvFolderPath, $"AddressManager{Network}.dat");
 			_spvChainFilePath = Path.Combine(SpvFolderPath, $"LocalSpvChain{Network}.dat");
@@ -62,15 +68,40 @@ namespace PlayWithSpv
 			var t2 = ReportHeightAsync(cts.Token);
 			var t3 = PeriodicSaveAsync(10000, cts.Token);
 			var t4 = BlockPullerJobAsync(cts.Token);
+			var t5 = ReportTransactionsWhenAllBlocksDownAsync(cts.Token);
 
 			Console.WriteLine("Press a key to exit...");
 			Console.ReadKey();
 			Console.WriteLine("Exiting...");
 
 			cts.Cancel();
-			Task.WhenAll(t1, t2, t3, t4).Wait();
+			Task.WhenAll(t1, t2, t3, t4, t5).Wait();
 			_nodes.Dispose();
 			SaveAsync().Wait();
+		}
+
+		private static async Task ReportTransactionsWhenAllBlocksDownAsync(CancellationToken ctsToken)
+		{
+			while(LocalPartialChain.BestHeight != LocalSpvChain.Height)
+			{
+				if (ctsToken.IsCancellationRequested) return;
+				await Task.Delay(100).ConfigureAwait(false);
+			}
+			ReportTransactions();
+		}
+
+		private static void ReportTransactions()
+		{
+			if(LocalPartialChain.TrackedTransactions.Count == 0)
+			{
+				Console.WriteLine("No transactions to report.");
+				return;
+			}
+			foreach(var tx in LocalPartialChain.TrackedTransactions)
+			{
+				Console.WriteLine("Height\tTxId");
+				Console.WriteLine($"{tx.Value}\t{tx.Key}");
+			}
 		}
 
 		private static async Task PeriodicSaveAsync(int delay, CancellationToken ctsToken)
@@ -198,7 +229,9 @@ namespace PlayWithSpv
 				BlockPuller.SetLocation(new ChainedBlock(chainedBlock.Previous.Header, chainedBlock.Previous.Height));
 				Block block = null;
 				const int timeoutSec = 60;
-				CancellationTokenSource ctsBlockDownload = new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSec));
+				CancellationTokenSource ctsBlockDownload = CancellationTokenSource.CreateLinkedTokenSource(
+					new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSec)).Token,
+					ctsToken);
 				try
 				{
 					block = await Task.Run(() => BlockPuller.NextBlock(ctsBlockDownload.Token)).ConfigureAwait(false);

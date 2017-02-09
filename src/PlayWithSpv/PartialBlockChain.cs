@@ -25,8 +25,8 @@ namespace PlayWithSpv
 		public int BlockCount => _chain.Count;
 
 		/// <summary> int: block height, if tx is not found yet -1 </summary>
-	    public ConcurrentDictionary<int, uint256> TrackedTransactions { get; }
-			= new ConcurrentDictionary<int, uint256>();
+	    public ConcurrentDictionary<uint256, int> TrackedTransactions { get; }
+			= new ConcurrentDictionary<uint256, int>();
 
 	    private readonly ConcurrentDictionary<int, Block> _fullBlockBuffer = new ConcurrentDictionary<int, Block>();
 		/// <summary>
@@ -53,7 +53,14 @@ namespace PlayWithSpv
 		/// <returns>False if not found. When confirms, it starts tracking. If too old you need to resync the chain.</returns>
 	    public bool Track(uint256 transactionId)
 	    {
-		    TrackedTransactions.AddOrReplace(-1, transactionId);
+		    if(TrackedTransactions.Keys.Contains(transactionId))
+		    {
+			    var tracked = TrackedTransactions.First(x => x.Key.Equals(transactionId));
+				if (tracked.Value == -1) return false;
+				else return true;
+		    }
+
+		    TrackedTransactions.AddOrReplace(transactionId, - 1);
 
 			Transaction transaction = null;
 			Block block = null;
@@ -87,12 +94,46 @@ namespace PlayWithSpv
 			}
 		}
 
+		public HashSet<Script> TrackedScriptPubKeys { get; }
+			= new HashSet<Script>();
+
+	    /// <param name="scriptPubKey">BitcoinAddress.ScriptPubKey</param>
+	    /// <param name="searchFullBlockBuffer">If true: it look for transactions in the buffered full blocks in memory</param>
+	    public void Track(Script scriptPubKey, bool searchFullBlockBuffer = false)
+		{
+			TrackedScriptPubKeys.Add(scriptPubKey);
+
+			foreach(var block in FullBlockBuffer)
+			{
+				TrackIfFindRelatedTransactions(scriptPubKey, block.Key, block.Value);
+			}
+		}
+
+		private void TrackIfFindRelatedTransactions(Script scriptPubKey, int height, Block block)
+		{
+			foreach (var tx in block.Transactions)
+			{
+				foreach (var output in tx.Outputs)
+				{
+					if (output.ScriptPubKey.Equals(scriptPubKey))
+					{
+						TrackedTransactions.AddOrReplace(tx.GetHash(), height);
+					}
+				}
+			}
+		}
+
 		public void Add(ChainedBlock chainedHeader, Block block)
 		{
 			if(chainedHeader.HashBlock != block.GetHash()) throw new ArgumentException("key.HashBlock != value.GetHash()");
 
+			foreach(var spk in TrackedScriptPubKeys)
+			{
+				TrackIfFindRelatedTransactions(spk, chainedHeader.Height, block);
+			}
+
 			FullBlockBuffer.AddOrReplace(chainedHeader.Height, block);
-			var notFoundTransactions = GetNotYetFoundTrackedTransactions();
+			HashSet<uint256> notFoundTransactions = GetNotYetFoundTrackedTransactions();
 			HashSet<uint256> foundTransactions = new HashSet<uint256>();
 			foreach(var txid in notFoundTransactions)
 			{
@@ -120,9 +161,9 @@ namespace PlayWithSpv
 		    var notFound = new HashSet<uint256>();
 		    foreach(var tx in TrackedTransactions)
 		    {
-			    if(tx.Key == -1)
+			    if(tx.Value == -1)
 			    {
-				    notFound.Add(tx.Value);
+				    notFound.Add(tx.Key);
 			    }
 		    }
 		    return notFound;
@@ -149,13 +190,12 @@ namespace PlayWithSpv
 	{
 		public ChainedBlock ChainedHeader { get; }
 		public MerkleBlock MerkleProof { get; set; }
-		public ConcurrentBag<Transaction> Transactions { get; }
+		public HashSet<Transaction> Transactions { get; } = new HashSet<Transaction>();
 
 		public PartialBlock(ChainedBlock chainedHeader, MerkleBlock merkleProof)
 		{
 			ChainedHeader = chainedHeader;
 			MerkleProof = merkleProof;
-			Transactions = new ConcurrentBag<Transaction>();
 		}
 	}
 }

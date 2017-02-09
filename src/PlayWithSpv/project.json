@@ -6,11 +6,12 @@
   },
 
   "dependencies": {
+    "DBreeze": "1.82.0",
     "Microsoft.NETCore.App": {
       "type": "platform",
       "version": "1.1.0"
     },
-    "NBitcoin": "3.0.1.9"
+    "NBitcoin": "3.0.2.3"
   },
 
   "frameworks": {

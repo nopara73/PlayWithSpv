@@ -1,4 +1,3 @@
-# PlayWithSpv
 Fullblock-SPV proof of concept implementation in .NET Core.  
   
 ## Disclaimer  

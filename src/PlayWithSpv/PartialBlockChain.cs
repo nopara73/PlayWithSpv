@@ -3,21 +3,18 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
-using Newtonsoft.Json;
 
 namespace PlayWithSpv
 {
-	// todo make class threadsafe
 	public class PartialBlockChain
 	{
 		#region Members
 
 		public Network Network { get; private set; }
-		private readonly ConcurrentDictionary<int, PartialBlock> _chain = new ConcurrentDictionary<int, PartialBlock>();
+		public ConcurrentDictionary<int, PartialBlock> Chain { get; } = new ConcurrentDictionary<int, PartialBlock>();
 
 		/// <summary> int: block height, if tx is not found yet -1 </summary>
 		public ConcurrentDictionary<uint256, int> TrackedTransactions { get; }
@@ -45,9 +42,9 @@ namespace PlayWithSpv
 			}
 		}
 
-		public int WorstHeight => _chain.Count == 0 ? -1 : _chain.Values.Select(partialBlock => partialBlock.Height).Min();
-		public int BestHeight => _chain.Count == 0 ? -1 : _chain.Values.Select(partialBlock => partialBlock.Height).Max();
-		public int BlockCount => _chain.Count;
+		public int WorstHeight => Chain.Count == 0 ? -1 : Chain.Values.Select(partialBlock => partialBlock.Height).Min();
+		public int BestHeight => Chain.Count == 0 ? -1 : Chain.Values.Select(partialBlock => partialBlock.Height).Max();
+		public int BlockCount => Chain.Count;
 
 		#endregion
 
@@ -100,7 +97,7 @@ namespace PlayWithSpv
 			else
 			{
 				PartialBlock partialBlock =
-					_chain.First(x => block.Header.GetHash().Equals(x.Value.MerkleProof.Header.GetHash())).Value;
+					Chain.First(x => block.Header.GetHash().Equals(x.Value.MerkleProof.Header.GetHash())).Value;
 
 				partialBlock.Transactions.Add(transaction);
 				var transactionHashes = partialBlock.MerkleProof.PartialMerkleTree.GetMatchedTransactions() as HashSet<uint256>;
@@ -149,6 +146,32 @@ namespace PlayWithSpv
 
 		#endregion
 
+		public void ReorgOne()
+		{
+			// remove the last block
+			PartialBlock pb;
+			if(Chain.Count != 0)
+			{
+				Chain.TryRemove(BestHeight, out pb);
+
+				if(pb.Transactions.Count != 0)
+				{
+					// set the transactions to unconfirmed
+					foreach(var txId in pb.Transactions.Select(x => x.GetHash()))
+					{
+						TrackedTransactions.AddOrReplace(txId, -1);
+					}
+				}
+			}
+
+			// remove the last block from the buffer too
+			Block b;
+			if(FullBlockBuffer.Count() != 0)
+			{
+				FullBlockBuffer.TryRemove(FullBlockBuffer.Keys.Max(), out b);
+			}
+		}
+
 		public void Add(int height, Block block)
 		{
 			foreach(var spk in TrackedScriptPubKeys)
@@ -177,7 +200,7 @@ namespace PlayWithSpv
 				}
 			}
 
-			_chain.AddOrReplace(partialBlock.Height, partialBlock);
+			Chain.AddOrReplace(partialBlock.Height, partialBlock);
 		}
 
 		#region Saving
@@ -197,7 +220,7 @@ namespace PlayWithSpv
 			await Saving.WaitAsync().ConfigureAwait(false);
 			try
 			{
-				if (TrackedScriptPubKeys.Count > 0 || TrackedTransactions.Count > 0 || _chain.Count > 0)
+				if (TrackedScriptPubKeys.Count > 0 || TrackedTransactions.Count > 0 || Chain.Count > 0)
 				{
 					Directory.CreateDirectory(partialChainFolderPath);
 				}
@@ -216,10 +239,10 @@ namespace PlayWithSpv
 						TrackedTransactions.Select(x => $"{x.Key}:{x.Value}"));
 				}
 
-				if(_chain.Count > 0)
+				if(Chain.Count > 0)
 				{
-					byte[] toFile = _chain.Values.First().ToBytes();
-					foreach (var block in _chain.Values.Skip(1))
+					byte[] toFile = Chain.Values.First().ToBytes();
+					foreach (var block in Chain.Values.Skip(1))
 					{
 						toFile = toFile.Concat(blockSep).Concat(block.ToBytes()).ToArray();
 					}
@@ -268,7 +291,7 @@ namespace PlayWithSpv
 					{
 						PartialBlock pb = new PartialBlock().FromBytes(block);
 
-						_chain.TryAdd(pb.Height, pb);
+						Chain.TryAdd(pb.Height, pb);
 					}
 				}
 			}

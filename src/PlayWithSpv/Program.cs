@@ -12,7 +12,7 @@ namespace PlayWithSpv
 	public class Program
 	{
 		private static readonly Network Network = Network.Main;
-		private const int WalletCreationHeight = 451900; //1087900;
+		private const int WalletCreationHeight = 451900; // 1087900;
 
 		public static SemaphoreSlim SemaphoreSave = new SemaphoreSlim(1, 1);
 		public static SemaphoreSlim SemaphoreSaveFullChain = new SemaphoreSlim(1, 1);
@@ -84,8 +84,12 @@ namespace PlayWithSpv
 		{
 			while(LocalPartialChain.BestHeight != LocalSpvChain.Height)
 			{
-				if (ctsToken.IsCancellationRequested) return;
-				await Task.Delay(100).ConfigureAwait(false);
+				if (ctsToken.IsCancellationRequested)
+				{
+					Console.WriteLine($"{nameof(ReportTransactionsWhenAllBlocksDownAsync)} is stopped.");
+					return;
+				}
+				await Task.Delay(100, ctsToken).ContinueWith(tsk => { }).ConfigureAwait(false);
 			}
 			ReportTransactions();
 		}
@@ -107,9 +111,13 @@ namespace PlayWithSpv
 		{
 			while (true)
 			{
-				if (ctsToken.IsCancellationRequested) return;
+				if (ctsToken.IsCancellationRequested)
+				{
+					Console.WriteLine($"{nameof(PeriodicSaveAsync)} is stopped.");
+					return;
+				}
 				await SaveAllAsync().ConfigureAwait(false);
-				await Task.Delay(delay).ConfigureAwait(false);
+				await Task.Delay(delay, ctsToken).ContinueWith(tsk => { }).ConfigureAwait(false);
 			}
 		}
 		private static async Task SaveAllAsync()
@@ -144,7 +152,11 @@ namespace PlayWithSpv
 		{
 			while (true)
 			{
-				if (ctsToken.IsCancellationRequested) return;
+				if(ctsToken.IsCancellationRequested)
+				{
+					Console.WriteLine($"{nameof(ReportConnectedNodeCountAsync)} is stopped.");
+					return;
+				}
 
 				var nodeCount = _nodes.ConnectedNodes.Count;
 				if(prevNodeCount != nodeCount)
@@ -152,24 +164,36 @@ namespace PlayWithSpv
 					prevNodeCount = nodeCount;
 					Console.WriteLine($"Number of connected nodes: {nodeCount}");
 				}
-				await Task.Delay(100).ConfigureAwait(false);
+				await Task.Delay(100, ctsToken).ContinueWith(tsk => { }).ConfigureAwait(false);
 			}
 		}
-		private static int prevSpvHeight = -1;
+		private static int _prevSpvHeight = -1;
+		private static int _prevPartialHeight = -1;
 		private static async Task ReportHeightAsync(CancellationToken ctsToken)
 		{
 			while (true)
 			{
-				if (ctsToken.IsCancellationRequested) return;
-
-				var height = LocalSpvChain.Height;
-				if (prevSpvHeight != height)
+				if (ctsToken.IsCancellationRequested)
 				{
-					prevSpvHeight = height;
-					Console.WriteLine($"Height of local SPV chain:  {height}");
+					Console.WriteLine($"{nameof(ReportHeightAsync)} is stopped.");
+					return;
 				}
 
-				await Task.Delay(3000).ConfigureAwait(false);
+				var spvHeight = LocalSpvChain.Height;
+				if (_prevSpvHeight != spvHeight)
+				{
+					_prevSpvHeight = spvHeight;
+					Console.WriteLine($"Height of local SPV chain:  {spvHeight}");
+				}
+
+				var partialHeight = LocalPartialChain.BestHeight;
+				if (_prevPartialHeight != partialHeight)
+				{
+					_prevPartialHeight = partialHeight;
+					Console.WriteLine($"Height of local Partial chain:  {partialHeight}");
+				}
+
+				await Task.Delay(3000, ctsToken).ContinueWith(tsk => { }).ConfigureAwait(false);
 			}
 		}
 
@@ -178,10 +202,15 @@ namespace PlayWithSpv
 		{
 			while(true)
 			{
-				if(ctsToken.IsCancellationRequested) return;
-				if(LocalSpvChain.Height < WalletCreationHeight)
+				if (ctsToken.IsCancellationRequested)
 				{
-					await Task.Delay(1000).ConfigureAwait(false);
+					Console.WriteLine($"{nameof(BlockPullerJobAsync)} is stopped.");
+					return;
+				}
+
+				if (LocalSpvChain.Height < WalletCreationHeight)
+				{
+					await Task.Delay(1000, ctsToken).ContinueWith(tsk => { }).ConfigureAwait(false);
 					continue;
 				}
 
@@ -192,7 +221,7 @@ namespace PlayWithSpv
 				}
 				else if(LocalSpvChain.Height <= LocalPartialChain.BestHeight)
 				{
-					await Task.Delay(100).ConfigureAwait(false);
+					await Task.Delay(100, ctsToken).ContinueWith(tsk => { }).ConfigureAwait(false);
 					continue;
 				}
 				else
@@ -217,16 +246,39 @@ namespace PlayWithSpv
 					timeoutDownSec = timeoutDownSec * 2; // adjust to the network speed
 					continue;
 				}
-				if(block == null)
+
+				//reorg test
+				//if(new Random().Next(100) >= 60) block = null;
+
+				if (block == null) // then reorg happened
 				{
-					Console.WriteLine("Downloaded block is null. Retry");
+					Reorg();
 					continue;
 				}
 
 				LocalPartialChain.Add(chainedBlock.Height, block);
 
+				// check if chains are in sync, to be sure
+				var bh = LocalPartialChain.BestHeight;
+				for(int i = bh; i > bh - 6; i--)
+				{
+					if (!LocalPartialChain.Chain[i].MerkleProof.Header.GetHash()
+					.Equals(LocalSpvChain.GetBlock(i).Header.GetHash()))
+					{
+						// something worng, reorg
+						Reorg();
+					}
+				}
+
 				Console.WriteLine($"Full blocks left to download:  {LocalSpvChain.Height - LocalPartialChain.BestHeight}");
 			}
+		}
+
+		private static void Reorg()
+		{
+			Console.WriteLine($"Reorg detected at {LocalSpvChain.Height}. Handling reog.");
+			LocalSpvChain.SetTip(LocalSpvChain.Tip.Previous);
+			LocalPartialChain.ReorgOne();
 		}
 
 		private static AddressManager AddressManager

@@ -16,30 +16,27 @@ namespace PlayWithSpv
 
 		public static SemaphoreSlim SemaphoreSave = new SemaphoreSlim(1, 1);
 		public static SemaphoreSlim SemaphoreSaveFullChain = new SemaphoreSlim(1, 1);
-		private static string _addressManagerFilePath;
-		private static string _spvChainFilePath;
-		private static string _partialChainFilePath;
+		private static readonly string _addressManagerFilePath = Path.Combine(SpvFolderPath, $"AddressManager{Network}.dat");
+		private static readonly string _spvChainFilePath = Path.Combine(SpvFolderPath, $"LocalSpvChain{Network}.dat");
+		private static readonly string _partialChainFolderPath = Path.Combine(SpvFolderPath, $"LocalPartialChain{Network}");
 		private const string SpvFolderPath = "Spv";
 		private static LookaheadBlockPuller BlockPuller;
 		private static NodeConnectionParameters _connectionParameters;
 
 		public static void Main(string[] args)
 		{
-			// TestNet addresses, first time used
-			var a1 = BitcoinAddress.Create("2Mz3BiReit6sNrSh9EMuhwUnhtqf2B35HpN"); // testnet, 1088037
-			var a2 = BitcoinAddress.Create("mwiSUHLGngZd849Sz3TE6kRb7fHjJCuwKe"); // testnet, 1088031
-			//var a3 = BitcoinAddress.Create("muE3Z5Lhdk3WerqVevH49htmV96HJu4RLJ"); // testnet, 1088031
-			LocalPartialChain.Track(a1.ScriptPubKey);
-			LocalPartialChain.Track(a2.ScriptPubKey);
-			//LocalPartialChain.Track(a3.ScriptPubKey);
-			Console.WriteLine($"Tracking {a1}");
-			Console.WriteLine($"Tracking {a2}");
-			//Console.WriteLine($"Tracking {a3}");
-
 			Directory.CreateDirectory(SpvFolderPath);
-			_addressManagerFilePath = Path.Combine(SpvFolderPath, $"AddressManager{Network}.dat");
-			_spvChainFilePath = Path.Combine(SpvFolderPath, $"LocalSpvChain{Network}.dat");
-			_partialChainFilePath = Path.Combine(SpvFolderPath, $"LocalFullChain{Network}.dat");
+
+			// TestNet addresses, first time used
+			//var a1 = BitcoinAddress.Create("2Mz3BiReit6sNrSh9EMuhwUnhtqf2B35HpN"); // testnet, 1088037
+			//var a2 = BitcoinAddress.Create("mwiSUHLGngZd849Sz3TE6kRb7fHjJCuwKe"); // testnet, 1088031
+			//var a3 = BitcoinAddress.Create("muE3Z5Lhdk3WerqVevH49htmV96HJu4RLJ"); // testnet, 1088031
+			//LocalPartialChain.Track(a1.ScriptPubKey);
+			//LocalPartialChain.Track(a2.ScriptPubKey);
+			//LocalPartialChain.Track(a3.ScriptPubKey);
+			//Console.WriteLine($"Tracking {a1}");
+			//Console.WriteLine($"Tracking {a2}");
+			//Console.WriteLine($"Tracking {a3}");
 
 			_connectionParameters = new NodeConnectionParameters();
 
@@ -69,6 +66,7 @@ namespace PlayWithSpv
 			var t3 = PeriodicSaveAsync(10000, cts.Token);
 			var t4 = BlockPullerJobAsync(cts.Token);
 			var t5 = ReportTransactionsWhenAllBlocksDownAsync(cts.Token);
+			ReportTransactions();
 
 			Console.WriteLine("Press a key to exit...");
 			Console.ReadKey();
@@ -76,8 +74,10 @@ namespace PlayWithSpv
 
 			cts.Cancel();
 			Task.WhenAll(t1, t2, t3, t4, t5).Wait();
-			_nodes.Dispose();
+
 			SaveAsync().Wait();
+
+			_nodes.Dispose();
 		}
 
 		private static async Task ReportTransactionsWhenAllBlocksDownAsync(CancellationToken ctsToken)
@@ -140,27 +140,24 @@ namespace PlayWithSpv
 			await SemaphoreSave.WaitAsync().ConfigureAwait(false);
 			try
 			{
-				await Task.Run(() =>
+				AddressManager.SavePeerFile(_addressManagerFilePath, Network);
+
+				if(saveSpvChain)
 				{
-					AddressManager.SavePeerFile(_addressManagerFilePath, Network);
-
-					if(saveSpvChain)
+					using(var fs = File.Open(_spvChainFilePath, FileMode.Create))
 					{
-						using(var fs = File.Open(_spvChainFilePath, FileMode.Create))
-						{
-							LocalSpvChain.WriteTo(fs);
-						}
-						Console.WriteLine($"{nameof(LocalSpvChain)} saved");
+						LocalSpvChain.WriteTo(fs);
 					}
-
-					LocalPartialChain.Flush(_partialChainFilePath);
-					Console.WriteLine($"{nameof(LocalPartialChain)} saved");
-				}).ConfigureAwait(false);
+					Console.WriteLine($"{nameof(LocalSpvChain)} saved");
+				}
 			}
 			finally
 			{
 				SemaphoreSave.Release();
 			}
+
+			LocalPartialChain.SaveAsync(_partialChainFolderPath).Wait();
+			Console.WriteLine($"{nameof(LocalPartialChain)} saved");
 		}
 
 		private static NodesGroup _nodes;
@@ -248,7 +245,7 @@ namespace PlayWithSpv
 					continue;
 				}
 
-				LocalPartialChain.Add(chainedBlock, block);
+				LocalPartialChain.Add(chainedBlock.Height, block);
 
 				Console.WriteLine($"Full blocks left to download:  {LocalSpvChain.Height - LocalPartialChain.BestHeight}");
 			}
@@ -312,30 +309,27 @@ namespace PlayWithSpv
 			}
 		}
 
-		private static PartialBlockChain _localMerkleChain = null;
-		private static PartialBlockChain LocalPartialChain
+		private static PartialBlockChain _localPartialChain = null;
+		private static PartialBlockChain LocalPartialChain => GetLocalPartialChainAsync().Result;
+
+		// This async getter is for clean exception handling
+		private static async Task<PartialBlockChain> GetLocalPartialChainAsync()
 		{
-			get
+			if (_localPartialChain != null) return _localPartialChain;
+
+			_localPartialChain = new PartialBlockChain(Network);
+			try
 			{
-				if(_localMerkleChain != null) return _localMerkleChain;
-
-				_localMerkleChain = new PartialBlockChain(Network);
-				SemaphoreSave.Wait();
-				try
-				{
-					_localMerkleChain.Load(_spvChainFilePath);
-				}
-				catch
-				{
-					// ignored
-				}
-				finally
-				{
-					SemaphoreSave.Release();
-				}
-
-				return _localMerkleChain;
+				await _localPartialChain.LoadAsync(_partialChainFolderPath).ConfigureAwait(false);
 			}
+			catch (Exception ex)
+			{
+				Console.WriteLine("Blockchain synchronisation is needed. Reason:");
+				Console.WriteLine(ex.Message);
+				_localPartialChain = new PartialBlockChain(Network);
+			}
+
+			return _localPartialChain;
 		}
 	}
 }

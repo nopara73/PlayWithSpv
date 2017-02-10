@@ -11,8 +11,8 @@ namespace PlayWithSpv
 {
 	public class Program
 	{
-		private static readonly Network Network = Network.TestNet;
-		private const int WalletCreationHeight = 1087900; // 451900;
+		private static readonly Network Network = Network.Main;
+		private const int WalletCreationHeight = 451900; //1087900;
 
 		public static SemaphoreSlim SemaphoreSave = new SemaphoreSlim(1, 1);
 		public static SemaphoreSlim SemaphoreSaveFullChain = new SemaphoreSlim(1, 1);
@@ -63,7 +63,7 @@ namespace PlayWithSpv
 
 			var t1 = ReportConnectedNodeCountAsync(cts.Token);
 			var t2 = ReportHeightAsync(cts.Token);
-			var t3 = PeriodicSaveAsync(10000, cts.Token);
+			var t3 = PeriodicSaveAsync(TimeSpan.FromMinutes(3), cts.Token);
 			var t4 = BlockPullerJobAsync(cts.Token);
 			var t5 = ReportTransactionsWhenAllBlocksDownAsync(cts.Token);
 			ReportTransactions();
@@ -75,7 +75,7 @@ namespace PlayWithSpv
 			cts.Cancel();
 			Task.WhenAll(t1, t2, t3, t4, t5).Wait();
 
-			SaveAsync().Wait();
+			SaveAllAsync().Wait();
 
 			_nodes.Dispose();
 		}
@@ -89,7 +89,6 @@ namespace PlayWithSpv
 			}
 			ReportTransactions();
 		}
-
 		private static void ReportTransactions()
 		{
 			if(LocalPartialChain.TrackedTransactions.Count == 0)
@@ -104,52 +103,22 @@ namespace PlayWithSpv
 			}
 		}
 
-		private static async Task PeriodicSaveAsync(int delay, CancellationToken ctsToken)
+		private static async Task PeriodicSaveAsync(TimeSpan delay, CancellationToken ctsToken)
 		{
 			while (true)
 			{
 				if (ctsToken.IsCancellationRequested) return;
-				await SaveAsync().ConfigureAwait(false);
+				await SaveAllAsync().ConfigureAwait(false);
 				await Task.Delay(delay).ConfigureAwait(false);
 			}
 		}
-		private static async Task SaveAsync()
+		private static async Task SaveAllAsync()
 		{
-			// Check if there is something to save
-			bool fileOk = true;
-			var c = new ConcurrentChain(Network);
-			await SemaphoreSave.WaitAsync().ConfigureAwait(false);
-			try
-			{
-				c.Load(File.ReadAllBytes(_spvChainFilePath));
-			}
-			catch
-			{
-				fileOk = false;
-			}
-			finally
-			{
-				SemaphoreSave.Release();
-			}
-
-			// If there is nothing to save don't save (can be improved by only saving what needs to be)
-			var sameTip = c.SameTip(LocalSpvChain);
-			bool saveSpvChain = !(fileOk && sameTip);
-
-			// If there is something to save then save
 			await SemaphoreSave.WaitAsync().ConfigureAwait(false);
 			try
 			{
 				AddressManager.SavePeerFile(_addressManagerFilePath, Network);
-
-				if(saveSpvChain)
-				{
-					using(var fs = File.Open(_spvChainFilePath, FileMode.Create))
-					{
-						LocalSpvChain.WriteTo(fs);
-					}
-					Console.WriteLine($"{nameof(LocalSpvChain)} saved");
-				}
+				SaveSpvChain();
 			}
 			finally
 			{
@@ -158,6 +127,14 @@ namespace PlayWithSpv
 
 			LocalPartialChain.SaveAsync(_partialChainFolderPath).Wait();
 			Console.WriteLine($"{nameof(LocalPartialChain)} saved");
+		}
+		private static void SaveSpvChain()
+		{
+			using (var fs = File.Open(_spvChainFilePath, FileMode.Create))
+			{
+				LocalSpvChain.WriteTo(fs);
+			}
+			Console.WriteLine($"{nameof(LocalSpvChain)} saved");
 		}
 
 		private static NodesGroup _nodes;
@@ -196,6 +173,7 @@ namespace PlayWithSpv
 			}
 		}
 
+		private static int timeoutDownSec = 10;
 		private static async Task BlockPullerJobAsync(CancellationToken ctsToken)
 		{
 			while(true)
@@ -225,9 +203,8 @@ namespace PlayWithSpv
 				var chainedBlock = LocalSpvChain.GetBlock(height);
 				BlockPuller.SetLocation(new ChainedBlock(chainedBlock.Previous.Header, chainedBlock.Previous.Height));
 				Block block = null;
-				const int timeoutSec = 60;
 				CancellationTokenSource ctsBlockDownload = CancellationTokenSource.CreateLinkedTokenSource(
-					new CancellationTokenSource(TimeSpan.FromSeconds(timeoutSec)).Token,
+					new CancellationTokenSource(TimeSpan.FromSeconds(timeoutDownSec)).Token,
 					ctsToken);
 				try
 				{
@@ -236,7 +213,8 @@ namespace PlayWithSpv
 				catch (OperationCanceledException)
 				{
 					if (ctsToken.IsCancellationRequested) return;
-					Console.WriteLine($"Failed to download block {chainedBlock.Height} within {timeoutSec} seconds. Retry");
+					Console.WriteLine($"Failed to download block {chainedBlock.Height} within {timeoutDownSec} seconds. Retry");
+					timeoutDownSec = timeoutDownSec * 2; // adjust to the network speed
 					continue;
 				}
 				if(block == null)

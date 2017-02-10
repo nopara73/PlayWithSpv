@@ -197,15 +197,24 @@ namespace PlayWithSpv
 			await Saving.WaitAsync().ConfigureAwait(false);
 			try
 			{
-				Directory.CreateDirectory(partialChainFolderPath);
+				if (TrackedScriptPubKeys.Count > 0 || TrackedTransactions.Count > 0 || _chain.Count > 0)
+				{
+					Directory.CreateDirectory(partialChainFolderPath);
+				}
 
-				File.WriteAllLines(
-					Path.Combine(partialChainFolderPath, FilesNames.TrackedScriptPubKeys.ToString()),
-					TrackedScriptPubKeys.Select(x => x.ToString()));
+				if(TrackedScriptPubKeys.Count > 0)
+				{
+					File.WriteAllLines(
+						Path.Combine(partialChainFolderPath, FilesNames.TrackedScriptPubKeys.ToString()),
+						TrackedScriptPubKeys.Select(x => x.ToString()));
+				}
 
-				File.WriteAllLines(
-					Path.Combine(partialChainFolderPath, FilesNames.TrackedTransactions.ToString()),
-					TrackedTransactions.Select(x => $"{x.Key}:{x.Value}"));
+				if(TrackedTransactions.Count > 0)
+				{
+					File.WriteAllLines(
+						Path.Combine(partialChainFolderPath, FilesNames.TrackedTransactions.ToString()),
+						TrackedTransactions.Select(x => $"{x.Key}:{x.Value}"));
+				}
 
 				if(_chain.Count > 0)
 				{

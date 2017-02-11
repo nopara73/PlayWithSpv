@@ -1,5 +1,7 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using NBitcoin;
@@ -12,7 +14,9 @@ namespace PlayWithSpv
 	public class Program
 	{
 		private static readonly Network Network = Network.Main;
-		private const int WalletCreationHeight = 451900; // 1087900;
+		private const int WalletCreationHeight = 451900;
+		//private static readonly Network Network = Network.TestNet;
+		//private const int WalletCreationHeight = 1087900;
 
 		public static SemaphoreSlim SemaphoreSave = new SemaphoreSlim(1, 1);
 		public static SemaphoreSlim SemaphoreSaveFullChain = new SemaphoreSlim(1, 1);
@@ -55,6 +59,7 @@ namespace PlayWithSpv
 			_connectionParameters.TemplateBehaviors.Add(new NodesBlockPuller.NodesBlockPullerBehavior(bp));
 			_nodes.NodeConnectionParameters = _connectionParameters;
 			BlockPuller = (LookaheadBlockPuller)bp;
+			MemPoolJob memPool = new MemPoolJob(_nodes, LocalPartialChain);
 
 			Console.WriteLine("Start connecting to nodes...");
 			_nodes.Connect();
@@ -65,19 +70,63 @@ namespace PlayWithSpv
 			var t2 = ReportHeightAsync(cts.Token);
 			var t3 = PeriodicSaveAsync(TimeSpan.FromMinutes(3), cts.Token);
 			var t4 = BlockPullerJobAsync(cts.Token);
-			var t5 = ReportTransactionsWhenAllBlocksDownAsync(cts.Token);
-			ReportTransactions();
+			//var t5 = ReportTransactionsWhenAllBlocksDownAsync(cts.Token);
+			var t6 = memPool.StartAsync(cts.Token);
+			var t7 = ReportMemPoolStateAsync(memPool, cts.Token);
+			//ReportTransactions();
 
 			Console.WriteLine("Press a key to exit...");
 			Console.ReadKey();
 			Console.WriteLine("Exiting...");
 
 			cts.Cancel();
-			Task.WhenAll(t1, t2, t3, t4, t5).Wait();
+			Task.WhenAll(t1, t2, t3, t4, t6, t7).Wait();//, t5, t6).Wait();
 
 			SaveAllAsync().Wait();
 
 			_nodes.Dispose();
+		}
+
+		private static MemPoolJob.MemPoolState _prevMempoolState = MemPoolJob.MemPoolState.NotStarted;
+		public static async Task ReportMemPoolStateAsync(MemPoolJob memPool, CancellationToken ctsToken)
+		{
+			while (true)
+			{
+				if (ctsToken.IsCancellationRequested)
+				{
+					Console.WriteLine($"{nameof(ReportMemPoolStateAsync)} is stopped.");
+					return;
+				}
+
+				if (_prevMempoolState != memPool.State)
+				{
+					_prevMempoolState = memPool.State;
+					Console.WriteLine($"MemPool state changed:  {memPool.State}");
+				}
+
+				if(memPool.State == MemPoolJob.MemPoolState.Syncing)
+				{
+					while(true)
+					{
+						if(ctsToken.IsCancellationRequested)
+						{
+							Console.WriteLine($"{nameof(ReportMemPoolStateAsync)} is stopped.");
+							return;
+						}
+
+						if(memPool.State != MemPoolJob.MemPoolState.Syncing)
+						{
+							break;
+						}
+
+						Console.WriteLine($"Number of transactions in mempool:  {memPool.Transactions.Count}");
+
+						await Task.Delay(5000, ctsToken).ContinueWith(tsk => { }).ConfigureAwait(false);
+					}
+				}
+
+				await Task.Delay(100, ctsToken).ContinueWith(tsk => { }).ConfigureAwait(false);
+			}
 		}
 
 		private static async Task ReportTransactionsWhenAllBlocksDownAsync(CancellationToken ctsToken)
@@ -243,7 +292,12 @@ namespace PlayWithSpv
 				{
 					if (ctsToken.IsCancellationRequested) return;
 					Console.WriteLine($"Failed to download block {chainedBlock.Height} within {timeoutDownSec} seconds. Retry");
-					timeoutDownSec = timeoutDownSec * 2; // adjust to the network speed
+					if(timeoutDownSec > 180)
+					{
+						timeoutDownSec = 20;
+						_nodes.Purge("no reason");
+					}
+					else timeoutDownSec = timeoutDownSec * 2; // adjust to the network speed
 					continue;
 				}
 
@@ -347,7 +401,7 @@ namespace PlayWithSpv
 		{
 			if (_localPartialChain != null) return _localPartialChain;
 
-			_localPartialChain = new PartialBlockChain(Network);
+			_localPartialChain = new PartialBlockChain(Network, LocalSpvChain);
 			try
 			{
 				await _localPartialChain.LoadAsync(_partialChainFolderPath).ConfigureAwait(false);
@@ -356,7 +410,7 @@ namespace PlayWithSpv
 			{
 				Console.WriteLine("Blockchain synchronisation is needed. Reason:");
 				Console.WriteLine(ex.Message);
-				_localPartialChain = new PartialBlockChain(Network);
+				_localPartialChain = new PartialBlockChain(Network, LocalSpvChain);
 			}
 
 			return _localPartialChain;

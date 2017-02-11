@@ -15,6 +15,7 @@ namespace PlayWithSpv
 
 		public Network Network { get; private set; }
 		public ConcurrentDictionary<int, PartialBlock> Chain { get; } = new ConcurrentDictionary<int, PartialBlock>();
+		private ConcurrentChain _headerChain;
 
 		/// <summary> int: block height, if tx is not found yet -1 </summary>
 		public ConcurrentDictionary<uint256, int> TrackedTransactions { get; }
@@ -45,6 +46,7 @@ namespace PlayWithSpv
 		public int WorstHeight => Chain.Count == 0 ? -1 : Chain.Values.Select(partialBlock => partialBlock.Height).Min();
 		public int BestHeight => Chain.Count == 0 ? -1 : Chain.Values.Select(partialBlock => partialBlock.Height).Max();
 		public int BlockCount => Chain.Count;
+		public bool Synced => BestHeight == _headerChain.Height;
 
 		#endregion
 
@@ -53,9 +55,10 @@ namespace PlayWithSpv
 		private PartialBlockChain()
 		{
 		}
-		public PartialBlockChain(Network network)
+		public PartialBlockChain(Network network, ConcurrentChain headerChain)
 		{
 			Network = network;
+			_headerChain = headerChain;
 		}
 
 		#endregion

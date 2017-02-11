@@ -14,7 +14,7 @@ It does not store the blocks, but rather listening to the interested bitcoin add
 [Read more about why this wallet structure has been chosen here.](https://medium.com/@nopara73/bitcoin-privacy-landscape-in-2017-zero-to-hero-guidelines-and-research-a10d30f1e034)  
   
 ##ToDo: 
-* Mempool implementation.  
+-
   
 ##ToNotDo: 
 * Store private keys.  
